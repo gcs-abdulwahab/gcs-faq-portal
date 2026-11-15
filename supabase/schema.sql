@@ -24,6 +24,13 @@ on conflict (email) do nothing;
 
 -- 3. Enable Row Level Security (RLS)
 alter table public.faqs enable row level security;
+alter table public.faq_editors enable row level security;
+
+-- Policy: A signed-in user can only check whether their own email is an editor.
+-- No insert/update/delete policies, so the editor list can only be changed from the dashboard/SQL editor.
+create policy "Users can read own editor row"
+  on public.faq_editors for select
+  using (email = auth.jwt() ->> 'email');
 
 -- Policy: Anyone (students/public) can view FAQs
 create policy "Public read access"
