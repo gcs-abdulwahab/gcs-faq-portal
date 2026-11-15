@@ -1,4 +1,4 @@
--- Run this script in your Supabase SQL Editor
+-- Run this script in your Supabase SQL Editor, then run admin.sql (roles, activity log, view tracking).
 
 -- 1. Create the FAQs table
 create table if not exists public.faqs (
@@ -18,7 +18,8 @@ create table if not exists public.faq_editors (
 -- Staff email addresses who have add/edit/delete permissions.
 -- Each editor also needs a Supabase Auth user (Authentication -> Users -> Add user) with a password.
 insert into public.faq_editors (email) values
-  ('admin@gcslahore.edu.pk')
+  ('admin@gcslahore.edu.pk'),
+  ('manager@gcslahore.edu.pk')
 on conflict (email) do nothing;
 
 -- 3. Enable Row Level Security (RLS)

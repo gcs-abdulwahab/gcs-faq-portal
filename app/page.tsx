@@ -1,12 +1,26 @@
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
-import { createClient } from "@supabase/supabase-js";
-import { Search, Plus, Edit2, Trash2, ShieldCheck, LogOut, LogIn, ChevronDown, BookOpen } from "lucide-react";
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
-const supabase = supabaseUrl && supabaseAnonKey ? createClient(supabaseUrl, supabaseAnonKey) : null;
+import Link from "next/link";
+import {
+  Search,
+  Plus,
+  Edit2,
+  Trash2,
+  ShieldCheck,
+  LogOut,
+  LogIn,
+  ChevronDown,
+  ChevronUp,
+  BookOpen,
+  BarChart3,
+  GripVertical,
+  ArrowUpDown,
+} from "lucide-react";
+import { supabase, getEditorRole, recordView, type EditorRole } from "@/lib/supabase";
+import { StarRating } from "@/components/StarRating";
+import { AskQuestion } from "@/components/AskQuestion";
+import { ReviewQueue } from "@/components/ReviewQueue";
 
 interface FAQ {
   id: string;
@@ -40,13 +54,16 @@ const FALLBACK_FAQS: FAQ[] = [
 
 export default function FAQPortal() {
   const [faqs, setFaqs] = useState<FAQ[]>([]);
+  const [stars, setStars] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState<boolean>(true);
   const [selectedCategory, setSelectedCategory] = useState<string>("All");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const [userEmail, setUserEmail] = useState<string | null>(null);
-  const [isEditor, setIsEditor] = useState<boolean>(false);
+  const [role, setRole] = useState<EditorRole | null>(null);
+  const isEditor = role !== null;
+  const isSuperAdmin = role === "super_admin";
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [loggingIn, setLoggingIn] = useState(false);
@@ -57,6 +74,34 @@ export default function FAQPortal() {
   const [customCategory, setCustomCategory] = useState("");
   const [saving, setSaving] = useState(false);
 
+  // Super admin drag-and-drop ordering
+  const [reorderList, setReorderList] = useState<FAQ[] | null>(null);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [savingOrder, setSavingOrder] = useState(false);
+
+  const moveItem = (from: number, to: number) => {
+    setReorderList((list) => {
+      if (!list || to < 0 || to >= list.length || from === to) return list;
+      const next = [...list];
+      const [item] = next.splice(from, 1);
+      next.splice(to, 0, item);
+      return next;
+    });
+  };
+
+  const saveOrder = async () => {
+    if (!supabase || !reorderList) return;
+    setSavingOrder(true);
+    const { error } = await supabase.rpc("reorder_faqs", { p_ids: reorderList.map((f) => f.id) });
+    setSavingOrder(false);
+    if (error) {
+      alert("Error saving order: " + error.message);
+      return;
+    }
+    setReorderList(null);
+    fetchFaqs();
+  };
+
   const fetchFaqs = async () => {
     setLoading(true);
     if (!supabase) {
@@ -64,10 +109,19 @@ export default function FAQPortal() {
       setLoading(false);
       return;
     }
-    const { data, error } = await supabase
-      .from("faqs")
-      .select("*")
-      .order("faq_code", { ascending: true });
+    const [{ data, error }, ratingsRes] = await Promise.all([
+      supabase
+        .from("faqs")
+        .select("*")
+        .order("sort_order", { ascending: true, nullsFirst: false })
+        .order("faq_code", { ascending: true }),
+      supabase.rpc("faq_star_ratings"),
+    ]);
+    if (ratingsRes.data) {
+      setStars(
+        Object.fromEntries((ratingsRes.data as { faq_id: string; stars: number }[]).map((r) => [r.faq_id, r.stars]))
+      );
+    }
     if (!error && data && data.length > 0) {
       setFaqs(data);
     } else {
@@ -79,20 +133,25 @@ export default function FAQPortal() {
   const checkEditorRole = async (email: string | undefined) => {
     if (!email || !supabase) {
       setUserEmail(null);
-      setIsEditor(false);
+      setRole(null);
       return;
     }
     setUserEmail(email);
-    const { data } = await supabase
-      .from("faq_editors")
-      .select("email")
-      .eq("email", email)
-      .single();
-    setIsEditor(!!data);
+    setRole(await getEditorRole(email));
+  };
+
+  const toggleFaq = (id: string) => {
+    if (expandedId === id) {
+      setExpandedId(null);
+    } else {
+      setExpandedId(id);
+      recordView(id);
+    }
   };
 
   useEffect(() => {
     fetchFaqs();
+    recordView();
     if (!supabase) return;
     supabase.auth.getSession().then(({ data: { session } }) => {
       checkEditorRole(session?.user?.email);
@@ -207,9 +266,18 @@ export default function FAQPortal() {
                 <div className="text-xs">
                   <div className="font-medium text-slate-200">{userEmail}</div>
                   <div className={isEditor ? "text-emerald-400 font-semibold" : "text-slate-400"}>
-                    {isEditor ? "Authorized Editor" : "View-Only Access"}
+                    {isSuperAdmin ? "Super Admin" : isEditor ? "Authorized Editor" : "View-Only Access"}
                   </div>
                 </div>
+                {isSuperAdmin && (
+                  <Link
+                    href="/admin"
+                    className="text-slate-300 hover:text-white p-1.5 rounded-lg hover:bg-slate-700 transition"
+                    title="Admin Dashboard"
+                  >
+                    <BarChart3 className="w-4 h-4" />
+                  </Link>
+                )}
                 <button
                   onClick={() => supabase?.auth.signOut()}
                   className="text-slate-300 hover:text-white p-1.5 rounded-lg hover:bg-slate-700 transition"
@@ -288,20 +356,120 @@ export default function FAQPortal() {
                 <strong>Editor Access Active:</strong> You can add new departments/categories, publish FAQs, or update existing answers.
               </span>
             </div>
-            <button
-              onClick={() =>
-                setEditingFaq({
-                  faq_code: "",
-                  category: categories[1] || "Registrar Office",
-                  question: "",
-                  answer: "",
-                })
-              }
-              className="inline-flex items-center justify-center gap-1.5 bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-blue-700 transition shrink-0"
-            >
-              <Plus className="w-4 h-4" />
-              Add New FAQ
-            </button>
+            <div className="flex gap-2 shrink-0">
+              {isSuperAdmin && !reorderList && (
+                <button
+                  onClick={() => {
+                    setEditingFaq(null);
+                    setReorderList([...faqs]);
+                  }}
+                  className="inline-flex items-center justify-center gap-1.5 bg-white border border-blue-300 text-blue-700 px-4 py-2 rounded-xl text-sm font-medium hover:bg-blue-100 transition"
+                >
+                  <ArrowUpDown className="w-4 h-4" />
+                  Reorder FAQs
+                </button>
+              )}
+              <button
+                onClick={() =>
+                  setEditingFaq({
+                    faq_code: "",
+                    category: categories[1] || "Registrar Office",
+                    question: "",
+                    answer: "",
+                  })
+                }
+                className="inline-flex items-center justify-center gap-1.5 bg-blue-600 text-white px-4 py-2 rounded-xl text-sm font-medium hover:bg-blue-700 transition"
+              >
+                <Plus className="w-4 h-4" />
+                Add New FAQ
+              </button>
+            </div>
+          </div>
+        )}
+
+        {isEditor && !reorderList && (
+          <ReviewQueue
+            categories={categories.filter((c) => c !== "All")}
+            existingCodes={faqs}
+            onPublished={fetchFaqs}
+          />
+        )}
+
+        {isSuperAdmin && reorderList && (
+          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-lg space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h2 className="font-bold text-lg text-slate-900">Reorder FAQs</h2>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Drag by the handle, or use the arrows. Students see FAQs in this order (also within each category).
+                </p>
+              </div>
+              <div className="flex gap-2 shrink-0">
+                <button
+                  onClick={() => setReorderList(null)}
+                  className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded-xl font-medium"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={saveOrder}
+                  disabled={savingOrder}
+                  className="px-5 py-2 text-sm bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {savingOrder ? "Saving..." : "Save Order"}
+                </button>
+              </div>
+            </div>
+
+            <ol className="space-y-1.5">
+              {reorderList.map((faq, index) => (
+                <li
+                  key={faq.id}
+                  draggable
+                  onDragStart={(e) => {
+                    setDragIndex(index);
+                    e.dataTransfer.effectAllowed = "move";
+                  }}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    if (dragIndex !== null && dragIndex !== index) {
+                      moveItem(dragIndex, index);
+                      setDragIndex(index);
+                    }
+                  }}
+                  onDragEnd={() => setDragIndex(null)}
+                  onDrop={(e) => e.preventDefault()}
+                  className={`flex items-center gap-2 bg-slate-50 border rounded-xl px-2.5 py-2 transition ${
+                    dragIndex === index ? "border-blue-400 bg-blue-50 opacity-70" : "border-slate-200"
+                  }`}
+                >
+                  <GripVertical className="w-4 h-4 text-slate-400 cursor-grab active:cursor-grabbing shrink-0" />
+                  <span className="text-xs text-slate-400 tabular-nums w-5 text-right shrink-0">{index + 1}</span>
+                  <span className="text-xs font-mono font-semibold bg-white border border-slate-200 text-slate-700 px-2 py-0.5 rounded-md shrink-0">
+                    {faq.faq_code}
+                  </span>
+                  <span className="text-sm text-slate-800 truncate flex-1 min-w-0">{faq.question}</span>
+                  <div className="flex shrink-0">
+                    <button
+                      onClick={() => moveItem(index, index - 1)}
+                      disabled={index === 0}
+                      className="p-1 text-slate-500 hover:text-slate-900 hover:bg-slate-200 rounded disabled:opacity-30"
+                      title="Move up"
+                    >
+                      <ChevronUp className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => moveItem(index, index + 1)}
+                      disabled={index === reorderList.length - 1}
+                      className="p-1 text-slate-500 hover:text-slate-900 hover:bg-slate-200 rounded disabled:opacity-30"
+                      title="Move down"
+                    >
+                      <ChevronDown className="w-4 h-4" />
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ol>
           </div>
         )}
 
@@ -448,7 +616,7 @@ export default function FAQPortal() {
                   className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden transition hover:border-slate-300"
                 >
                   <div
-                    onClick={() => setExpandedId(expandedId === faq.id ? null : faq.id)}
+                    onClick={() => toggleFaq(faq.id)}
                     className="p-5 cursor-pointer flex items-start justify-between gap-4"
                   >
                     <div className="space-y-1.5">
@@ -459,6 +627,7 @@ export default function FAQPortal() {
                         <span className="text-xs font-medium text-blue-700 bg-blue-50 px-2.5 py-0.5 rounded-full">
                           {faq.category}
                         </span>
+                        <StarRating stars={stars[faq.id] ?? 0} />
                       </div>
                       <h3 className="font-semibold text-slate-900 text-base">{faq.question}</h3>
                     </div>
@@ -498,6 +667,8 @@ export default function FAQPortal() {
             })}
           </div>
         )}
+
+        {!loading && <AskQuestion categories={categories.filter((c) => c !== "All")} prefill={searchQuery} />}
       </div>
     </main>
   );
