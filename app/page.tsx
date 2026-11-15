@@ -80,6 +80,7 @@ export default function FAQPortal() {
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [role, setRole] = useState<EditorRole | null>(null);
   const isEditor = role !== null;
+  const [authChecked, setAuthChecked] = useState(false); // avoids flashing viewer-only UI to editors
   const isSuperAdmin = role === "super_admin";
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
@@ -151,10 +152,12 @@ export default function FAQPortal() {
     if (!email || !supabase) {
       setUserEmail(null);
       setRole(null);
+      setAuthChecked(true);
       return;
     }
     setUserEmail(email);
     setRole(await getEditorRole(email));
+    setAuthChecked(true);
   };
 
   // Super admin: who added / last edited an FAQ
@@ -760,7 +763,8 @@ export default function FAQPortal() {
           </div>
         )}
 
-        {!loading && (
+        {/* Asking questions is for viewers; editors answer them in the review queue instead. */}
+        {!loading && (authChecked || !supabase) && !isEditor && (
           <AskQuestion
             categories={categories.filter((c) => c !== "All")}
             faqs={faqs}
