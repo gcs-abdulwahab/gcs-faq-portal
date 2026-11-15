@@ -18,7 +18,7 @@ import {
   ShieldAlert,
   Trash2,
 } from "lucide-react";
-import { supabase, getEditorRole } from "@/lib/supabase";
+import { supabase, getStaffAccess, type EditorRole } from "@/lib/supabase";
 import { StarRating, starsFromViews } from "@/components/StarRating";
 import { toPlainText } from "@/lib/richText";
 import { StaffAccounts } from "@/components/StaffAccounts";
@@ -87,15 +87,22 @@ export default function AdminDashboard() {
   const [actionFilter, setActionFilter] = useState<"all" | Action>("all");
   const [expandedLogId, setExpandedLogId] = useState<number | null>(null);
 
+  // Staff with the "view dashboard" permission can see stats and the activity log;
+  // account management stays super-admin only.
+  const [role, setRole] = useState<EditorRole | null>(null);
+  const isSuperAdmin = role === "super_admin";
+
   const checkAccess = useCallback(async (email: string | undefined) => {
     if (!email) {
       setUserEmail(null);
+      setRole(null);
       setAuthState("signed-out");
       return;
     }
     setUserEmail(email);
-    const role = await getEditorRole(email);
-    setAuthState(role === "super_admin" ? "ok" : "denied");
+    const access = await getStaffAccess(email);
+    setRole(access?.role ?? null);
+    setAuthState(access?.canViewDashboard ? "ok" : "denied");
   }, []);
 
   useEffect(() => {
@@ -212,7 +219,8 @@ export default function AdminDashboard() {
               <div className="flex items-start gap-2 bg-red-50 border border-red-200 text-red-800 rounded-xl p-3 text-sm">
                 <ShieldAlert className="w-4 h-4 mt-0.5 shrink-0" />
                 <span>
-                  <strong>{userEmail}</strong> does not have super admin access.
+                  <strong>{userEmail}</strong> doesn&apos;t have permission to view the dashboard. Ask the super admin
+                  to enable it.
                 </span>
               </div>
               <button
@@ -275,7 +283,9 @@ export default function AdminDashboard() {
             <div className="flex items-center gap-2 bg-slate-800 border border-slate-700 px-3 py-1.5 rounded-xl">
               <div className="text-xs">
                 <div className="text-slate-200">{userEmail}</div>
-                <div className="text-amber-400 font-semibold">Super Admin</div>
+                <div className={isSuperAdmin ? "text-amber-400 font-semibold" : "text-emerald-400 font-semibold"}>
+                  {isSuperAdmin ? "Super Admin" : "Editor"}
+                </div>
               </div>
               <button
                 onClick={() => supabase?.auth.signOut()}
@@ -309,7 +319,7 @@ export default function AdminDashboard() {
           ))}
         </section>
 
-        <StaffAccounts currentEmail={userEmail} />
+        {isSuperAdmin && <StaffAccounts currentEmail={userEmail} />}
 
         <section className="bg-white rounded-2xl border border-slate-200 shadow-sm">
           <div className="px-5 py-4 border-b border-slate-100">

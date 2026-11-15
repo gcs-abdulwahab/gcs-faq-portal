@@ -31,7 +31,7 @@ function formatDateTime(iso: string | null) {
   if (!iso) return "";
   return new Date(iso).toLocaleString("en-PK", { dateStyle: "medium", timeStyle: "short" });
 }
-import { supabase, getEditorRole, recordView, type EditorRole } from "@/lib/supabase";
+import { supabase, getStaffAccess, recordView, type StaffAccess } from "@/lib/supabase";
 import { StarRating } from "@/components/StarRating";
 import { AskQuestion } from "@/components/AskQuestion";
 import { ReviewQueue } from "@/components/ReviewQueue";
@@ -80,7 +80,8 @@ export default function FAQPortal() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const [userEmail, setUserEmail] = useState<string | null>(null);
-  const [role, setRole] = useState<EditorRole | null>(null);
+  const [access, setAccess] = useState<StaffAccess | null>(null);
+  const role = access?.role ?? null;
   const isEditor = role !== null;
   const [authChecked, setAuthChecked] = useState(false); // avoids flashing viewer-only UI to editors
   const isSuperAdmin = role === "super_admin";
@@ -153,12 +154,12 @@ export default function FAQPortal() {
   const checkEditorRole = async (email: string | undefined) => {
     if (!email || !supabase) {
       setUserEmail(null);
-      setRole(null);
+      setAccess(null);
       setAuthChecked(true);
       return;
     }
     setUserEmail(email);
-    setRole(await getEditorRole(email));
+    setAccess(await getStaffAccess(email));
     setAuthChecked(true);
   };
 
@@ -328,7 +329,7 @@ export default function FAQPortal() {
                     {isSuperAdmin ? "Super Admin" : isEditor ? "Authorized Editor" : "View-Only Access"}
                   </div>
                 </div>
-                {isSuperAdmin && (
+                {access?.canViewDashboard && (
                   <Link
                     href="/admin"
                     className="text-slate-300 hover:text-white p-1.5 rounded-lg hover:bg-slate-700 transition"
@@ -412,7 +413,12 @@ export default function FAQPortal() {
             <div className="flex items-center gap-2.5 text-sm text-blue-950">
               <ShieldCheck className="w-5 h-5 text-blue-600 shrink-0" />
               <span>
-                <strong>Editor Access Active:</strong> You can add new departments/categories, publish FAQs, or update existing answers.
+                <strong>Editor Access Active:</strong> You can{" "}
+                {[access?.canAdd && "add", access?.canEdit && "edit", access?.canDelete && "delete"]
+                  .filter(Boolean)
+                  .join(", ")
+                  .replace(/, ([^,]*)$/, " and $1") || "view"}{" "}
+                FAQs.
               </span>
             </div>
             <div className="flex gap-2 shrink-0">
@@ -428,6 +434,7 @@ export default function FAQPortal() {
                   Reorder FAQs
                 </button>
               )}
+              {access?.canAdd && (
               <button
                 onClick={() =>
                   setEditingFaq({
@@ -442,6 +449,7 @@ export default function FAQPortal() {
                 <Plus className="w-4 h-4" />
                 Add New FAQ
               </button>
+              )}
             </div>
           </div>
         )}
@@ -451,6 +459,7 @@ export default function FAQPortal() {
             categories={categories.filter((c) => c !== "All")}
             existingCodes={faqs}
             onPublished={fetchFaqs}
+            canAdd={!!access?.canAdd}
           />
         )}
 
@@ -705,6 +714,7 @@ export default function FAQPortal() {
                               <Info className="w-4 h-4" />
                             </button>
                           )}
+                          {access?.canEdit && (
                           <button
                             onClick={() => setEditingFaq(faq)}
                             className="p-1.5 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition"
@@ -712,6 +722,8 @@ export default function FAQPortal() {
                           >
                             <Edit2 className="w-4 h-4" />
                           </button>
+                          )}
+                          {access?.canDelete && (
                           <button
                             onClick={() => handleDeleteFaq(faq.id)}
                             className="p-1.5 text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition"
@@ -719,6 +731,7 @@ export default function FAQPortal() {
                           >
                             <Trash2 className="w-4 h-4" />
                           </button>
+                          )}
                         </div>
                       )}
                       <ChevronDown

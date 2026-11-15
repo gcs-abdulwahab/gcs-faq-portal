@@ -619,3 +619,150 @@ revoke all on function public.admin_create_user(text, text, text) from public, a
 grant execute on function public.admin_list_users() to authenticated;
 grant execute on function public.admin_set_password(text, text) to authenticated;
 grant execute on function public.admin_create_user(text, text, text) to authenticated;
+
+-- 11. Per-staff permissions: add / edit / delete FAQs and view the dashboard ----------
+-- Super admins always have every permission. Existing staff keep full access (defaults true).
+alter table public.faq_editors
+  add column if not exists can_add boolean not null default true,
+  add column if not exists can_edit boolean not null default true,
+  add column if not exists can_delete boolean not null default true,
+  add column if not exists can_view_dashboard boolean not null default true;
+
+-- p_permission: 'add' | 'edit' | 'delete' | 'dashboard'
+create or replace function public.has_staff_permission(p_permission text)
+returns boolean
+language sql stable security definer set search_path = public
+as $$
+  select coalesce((
+    select case
+      when e.role = 'super_admin' then true
+      when p_permission = 'add' then e.can_add
+      when p_permission = 'edit' then e.can_edit
+      when p_permission = 'delete' then e.can_delete
+      when p_permission = 'dashboard' then e.can_view_dashboard
+      else false
+    end
+    from public.faq_editors e
+    where lower(e.email) = lower(auth.jwt() ->> 'email')
+  ), false);
+$$;
+revoke all on function public.has_staff_permission(text) from public, anon;
+grant execute on function public.has_staff_permission(text) to authenticated;
+
+-- Enforced on the table itself, so it covers the editor form, approving a visitor's
+-- question, and any direct API call. SQL editor / service-role changes (no JWT) are allowed.
+create or replace function public.faq_permission_guard()
+returns trigger
+language plpgsql security definer set search_path = public
+as $$
+begin
+  if auth.jwt() is null then
+    return coalesce(new, old);
+  end if;
+  if tg_op = 'INSERT' and not public.has_staff_permission('add') then
+    raise exception 'You do not have permission to add FAQs.' using errcode = '42501';
+  elsif tg_op = 'UPDATE' and not public.has_staff_permission('edit')
+        and (to_jsonb(new) - 'sort_order' - 'updated_at') is distinct from (to_jsonb(old) - 'sort_order' - 'updated_at') then
+    raise exception 'You do not have permission to edit FAQs.' using errcode = '42501';
+  elsif tg_op = 'DELETE' and not public.has_staff_permission('delete') then
+    raise exception 'You do not have permission to delete FAQs.' using errcode = '42501';
+  end if;
+  return coalesce(new, old);
+end;
+$$;
+drop trigger if exists faq_permission_guard on public.faqs;
+create trigger faq_permission_guard
+  before insert or update or delete on public.faqs
+  for each row execute function public.faq_permission_guard();
+
+-- Dashboard: any staff member with the 'dashboard' permission (was super admin only).
+drop policy if exists "Super admin reads audit log" on public.faq_audit_log;
+drop policy if exists "Staff with dashboard access read audit log" on public.faq_audit_log;
+create policy "Staff with dashboard access read audit log"
+  on public.faq_audit_log for select
+  using (public.has_staff_permission('dashboard'));
+
+create or replace function public.admin_faq_view_stats()
+returns table (
+  faq_id uuid, faq_code text, category text, question text,
+  views bigint, views_7d bigint, last_viewed timestamptz
+)
+language plpgsql stable security definer set search_path = public
+as $$
+begin
+  if not public.has_staff_permission('dashboard') then
+    raise exception 'Not authorized' using errcode = '42501';
+  end if;
+  return query
+    select f.id, f.faq_code, f.category, f.question,
+           count(v.id),
+           count(v.id) filter (where v.viewed_at > now() - interval '7 days'),
+           max(v.viewed_at)
+    from public.faqs f
+    left join public.faq_views v on v.faq_id = f.id
+    group by f.id
+    order by count(v.id) desc, f.faq_code;
+end;
+$$;
+
+create or replace function public.admin_view_totals()
+returns table (page_visits bigint, page_visits_7d bigint, faq_opens bigint, faq_opens_7d bigint)
+language plpgsql stable security definer set search_path = public
+as $$
+begin
+  if not public.has_staff_permission('dashboard') then
+    raise exception 'Not authorized' using errcode = '42501';
+  end if;
+  return query
+    select count(*) filter (where faq_id is null),
+           count(*) filter (where faq_id is null and viewed_at > now() - interval '7 days'),
+           count(*) filter (where faq_id is not null),
+           count(*) filter (where faq_id is not null and viewed_at > now() - interval '7 days')
+    from public.faq_views;
+end;
+$$;
+
+-- Staff list now includes permissions (return type changed, so drop first).
+drop function if exists public.admin_list_users();
+create function public.admin_list_users()
+returns table (
+  email text, role text, has_login boolean, last_sign_in_at timestamptz, created_at timestamptz,
+  can_add boolean, can_edit boolean, can_delete boolean, can_view_dashboard boolean
+)
+language plpgsql stable security definer set search_path = public
+as $$
+begin
+  if not public.is_super_admin() then
+    raise exception 'Only the super admin can view staff accounts.';
+  end if;
+  return query
+    select e.email, e.role, u.id is not null, u.last_sign_in_at, u.created_at,
+           e.can_add, e.can_edit, e.can_delete, e.can_view_dashboard
+    from public.faq_editors e
+    left join auth.users u on lower(u.email) = lower(e.email)
+    order by (e.role = 'super_admin') desc, e.email;
+end;
+$$;
+revoke all on function public.admin_list_users() from public, anon;
+grant execute on function public.admin_list_users() to authenticated;
+
+create or replace function public.admin_set_permissions(
+  p_email text, p_can_add boolean, p_can_edit boolean, p_can_delete boolean, p_can_view_dashboard boolean
+)
+returns void
+language plpgsql volatile security definer set search_path = public
+as $$
+begin
+  if not public.is_super_admin() then
+    raise exception 'Only the super admin can change permissions.';
+  end if;
+  update public.faq_editors
+    set can_add = p_can_add, can_edit = p_can_edit, can_delete = p_can_delete, can_view_dashboard = p_can_view_dashboard
+    where lower(email) = lower(trim(p_email)) and role <> 'super_admin';
+  if not found then
+    raise exception 'Permissions can only be changed for editor accounts (super admins always have full access).';
+  end if;
+end;
+$$;
+revoke all on function public.admin_set_permissions(text, boolean, boolean, boolean, boolean) from public, anon;
+grant execute on function public.admin_set_permissions(text, boolean, boolean, boolean, boolean) to authenticated;

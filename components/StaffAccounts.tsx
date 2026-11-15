@@ -11,6 +11,59 @@ interface StaffUser {
   has_login: boolean;
   last_sign_in_at: string | null;
   created_at: string | null;
+  can_add: boolean;
+  can_edit: boolean;
+  can_delete: boolean;
+  can_view_dashboard: boolean;
+}
+
+type PermKey = "can_add" | "can_edit" | "can_delete" | "can_view_dashboard";
+type Perms = Record<PermKey, boolean>;
+
+const PERMISSIONS: { key: PermKey; label: string; hint: string }[] = [
+  { key: "can_add", label: "Add FAQs", hint: "Create new FAQs and publish answers to visitor questions" },
+  { key: "can_edit", label: "Edit FAQs", hint: "Change existing questions and answers" },
+  { key: "can_delete", label: "Delete FAQs", hint: "Remove FAQs from the portal" },
+  { key: "can_view_dashboard", label: "View dashboard", hint: "See view stats and the activity log" },
+];
+
+const ALL_PERMS: Perms = { can_add: true, can_edit: true, can_delete: true, can_view_dashboard: true };
+
+function PermissionToggles({
+  value,
+  onToggle,
+  disabled,
+}: {
+  value: Perms;
+  onToggle: (key: PermKey) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {PERMISSIONS.map(({ key, label, hint }) => {
+        const on = value[key];
+        return (
+          <button
+            key={key}
+            type="button"
+            role="switch"
+            aria-checked={on}
+            title={hint}
+            disabled={disabled}
+            onClick={() => onToggle(key)}
+            className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full border transition disabled:opacity-60 ${
+              on
+                ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
+                : "bg-white text-slate-400 border-slate-200 line-through hover:bg-slate-50"
+            }`}
+          >
+            <span className={`h-1.5 w-1.5 rounded-full ${on ? "bg-emerald-500" : "bg-slate-300"}`} />
+            {label}
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 const MIN_PASSWORD = 8;
@@ -86,6 +139,8 @@ export function StaffAccounts({ currentEmail }: { currentEmail: string | null })
 
   const [adding, setAdding] = useState(false);
   const [newUser, setNewUser] = useState({ email: "", password: "", role: "editor" as StaffUser["role"] });
+  const [newPerms, setNewPerms] = useState<Perms>(ALL_PERMS);
+  const [savingPerms, setSavingPerms] = useState<string | null>(null);
   const [resetFor, setResetFor] = useState<string | null>(null);
   const [resetPassword, setResetPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -113,6 +168,21 @@ export function StaffAccounts({ currentEmail }: { currentEmail: string | null })
       p_password: newUser.password,
       p_role: newUser.role,
     });
+    if (!error && newUser.role === "editor" && Object.values(newPerms).some((v) => !v)) {
+      const res = await supabase.rpc("admin_set_permissions", {
+        p_email: email,
+        p_can_add: newPerms.can_add,
+        p_can_edit: newPerms.can_edit,
+        p_can_delete: newPerms.can_delete,
+        p_can_view_dashboard: newPerms.can_view_dashboard,
+      });
+      if (res.error) {
+        void dialog.alert({
+          title: "Account created, but permissions weren't saved",
+          message: res.error.message + " The account currently has full access; adjust it in the list below.",
+        });
+      }
+    }
     setBusy(false);
     if (error) {
       void dialog.alert({ title: "Couldn't add the account", message: error.message });
@@ -120,6 +190,7 @@ export function StaffAccounts({ currentEmail }: { currentEmail: string | null })
     }
     setAdding(false);
     setNewUser({ email: "", password: "", role: "editor" });
+    setNewPerms(ALL_PERMS);
     load();
     void dialog.alert({
       title: "Account created",
@@ -131,6 +202,31 @@ export function StaffAccounts({ currentEmail }: { currentEmail: string | null })
         </>
       ),
     });
+  };
+
+  const togglePermission = async (u: StaffUser, key: PermKey) => {
+    if (!supabase) return;
+    const next: Perms = {
+      can_add: u.can_add,
+      can_edit: u.can_edit,
+      can_delete: u.can_delete,
+      can_view_dashboard: u.can_view_dashboard,
+      [key]: !u[key],
+    };
+    setSavingPerms(u.email);
+    setUsers((list) => list.map((x) => (x.email === u.email ? { ...x, ...next } : x))); // optimistic
+    const { error } = await supabase.rpc("admin_set_permissions", {
+      p_email: u.email,
+      p_can_add: next.can_add,
+      p_can_edit: next.can_edit,
+      p_can_delete: next.can_delete,
+      p_can_view_dashboard: next.can_view_dashboard,
+    });
+    setSavingPerms(null);
+    if (error) {
+      void dialog.alert({ title: "Couldn't update permissions", message: error.message });
+      load();
+    }
   };
 
   const changePassword = async (e: React.FormEvent) => {
@@ -213,6 +309,17 @@ export function StaffAccounts({ currentEmail }: { currentEmail: string | null })
               </select>
             </label>
           </div>
+          {newUser.role === "editor" ? (
+            <div className="text-xs font-semibold text-slate-700 space-y-1.5">
+              Permissions
+              <PermissionToggles
+                value={newPerms}
+                onToggle={(key) => setNewPerms((p) => ({ ...p, [key]: !p[key] }))}
+              />
+            </div>
+          ) : (
+            <p className="text-xs text-slate-500">Super admins always have every permission, including managing staff accounts.</p>
+          )}
           <div className="flex justify-end gap-2.5">
             <button
               type="button"
@@ -265,6 +372,17 @@ export function StaffAccounts({ currentEmail }: { currentEmail: string | null })
                       )}
                     </div>
                     <div className="text-xs text-slate-500 mt-0.5">Last sign-in: {formatDate(u.last_sign_in_at)}</div>
+                    <div className="mt-2">
+                      {u.role === "super_admin" ? (
+                        <span className="text-xs text-slate-500">All permissions, including staff accounts</span>
+                      ) : (
+                        <PermissionToggles
+                          value={u}
+                          disabled={savingPerms === u.email}
+                          onToggle={(key) => togglePermission(u, key)}
+                        />
+                      )}
+                    </div>
                   </div>
                   {!open && (
                     <button

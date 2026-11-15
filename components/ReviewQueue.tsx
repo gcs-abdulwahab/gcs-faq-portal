@@ -19,6 +19,8 @@ interface Props {
   categories: string[];
   existingCodes: MatchableFaq[];
   onPublished: () => void;
+  /** Approving a question publishes a new FAQ, so it needs the "add" permission. */
+  canAdd: boolean;
 }
 
 // Suggest the next code for a category, e.g. REG-06 -> REG-07, or LIB-01 for a new "Library" category.
@@ -37,7 +39,7 @@ function suggestCode(category: string, existing: Props["existingCodes"]) {
   return `${prefix}-${String(next).padStart(2, "0")}`;
 }
 
-export function ReviewQueue({ categories, existingCodes, onPublished }: Props) {
+export function ReviewQueue({ categories, existingCodes, onPublished, canAdd }: Props) {
   const dialog = useDialog();
   const [items, setItems] = useState<Submission[]>([]);
   const [expanded, setExpanded] = useState(true);
@@ -185,12 +187,14 @@ export function ReviewQueue({ categories, existingCodes, onPublished }: Props) {
                     >
                       <Link2 className="w-3.5 h-3.5" /> Refer to FAQ
                     </button>
+                    {canAdd && (
                     <button
                       onClick={() => startApprove(s)}
                       className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700"
                     >
                       <Check className="w-3.5 h-3.5" /> New Question
                     </button>
+                    )}
                   </div>
                 )}
               </div>
