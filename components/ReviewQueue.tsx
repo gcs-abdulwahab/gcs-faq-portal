@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase";
 import { findSimilarFaqs, type MatchableFaq } from "@/lib/similar";
 import { RichTextEditor } from "@/components/RichTextEditor";
 import { isBlankRichText } from "@/lib/richText";
+import { useDialog } from "@/components/Dialog";
 
 interface Submission {
   id: string;
@@ -37,6 +38,7 @@ function suggestCode(category: string, existing: Props["existingCodes"]) {
 }
 
 export function ReviewQueue({ categories, existingCodes, onPublished }: Props) {
+  const dialog = useDialog();
   const [items, setItems] = useState<Submission[]>([]);
   const [expanded, setExpanded] = useState(true);
   const [approving, setApproving] = useState<string | null>(null);
@@ -82,7 +84,7 @@ export function ReviewQueue({ categories, existingCodes, onPublished }: Props) {
     e.preventDefault();
     if (!supabase || !approving) return;
     if (isBlankRichText(form.answer)) {
-      alert("Please write an answer.");
+      void dialog.alert({ title: "The answer is empty", message: "Please write an answer before publishing.", tone: "info" });
       return;
     }
     const category = form.category === "__NEW__" ? form.newCategory.trim() : form.category;
@@ -96,7 +98,7 @@ export function ReviewQueue({ categories, existingCodes, onPublished }: Props) {
     });
     setBusy(false);
     if (error) {
-      alert("Could not approve: " + error.message);
+      void dialog.alert({ title: "Couldn't approve", message: error.message });
       return;
     }
     setApproving(null);
@@ -106,19 +108,37 @@ export function ReviewQueue({ categories, existingCodes, onPublished }: Props) {
 
   const refer = async (s: Submission, faq: MatchableFaq) => {
     if (!supabase) return;
-    if (!confirm(`Answer this question with ${faq.faq_code}?\n\n"${faq.question}"`)) return;
+    const ok = await dialog.confirm({
+      title: `Answer with ${faq.faq_code}?`,
+      message: (
+        <>
+          The visitor will be pointed to this existing FAQ:
+          <span className="block mt-2 p-2.5 rounded-lg bg-slate-50 border border-slate-200 text-slate-800">{faq.question}</span>
+        </>
+      ),
+      confirmLabel: "Send FAQ",
+    });
+    if (!ok) return;
     const { error } = await supabase.rpc("refer_submission", { p_id: s.id, p_faq_id: faq.id });
-    if (error) alert("Could not refer: " + error.message);
+    if (error) void dialog.alert({ title: "Couldn't refer", message: error.message });
     setReferPicker(null);
     load();
   };
 
   const reject = async (s: Submission) => {
     if (!supabase) return;
-    const note = prompt(`Reject this question?\n\n"${s.question}"\n\nOptional reason (only staff will see it):`);
+    const note = await dialog.prompt({
+      title: "Reject this question?",
+      message: <span className="block p-2.5 rounded-lg bg-slate-50 border border-slate-200 text-slate-800">{s.question}</span>,
+      label: "Reason (optional, only staff will see it)",
+      placeholder: "e.g. Duplicate, spam, not a university matter…",
+      multiline: true,
+      tone: "danger",
+      confirmLabel: "Reject",
+    });
     if (note === null) return;
     const { error } = await supabase.rpc("reject_submission", { p_id: s.id, p_note: note });
-    if (error) alert("Could not reject: " + error.message);
+    if (error) void dialog.alert({ title: "Couldn't reject", message: error.message });
     load();
   };
 

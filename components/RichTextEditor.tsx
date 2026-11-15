@@ -23,6 +23,7 @@ import {
   Undo2,
 } from "lucide-react";
 import { toSafeHtml } from "@/lib/richText";
+import { useDialog } from "@/components/Dialog";
 import { ALLOWED_IMAGE_TYPES, uploadFaqImage } from "@/lib/uploadImage";
 
 type Props = {
@@ -159,11 +160,19 @@ export function RichTextEditor({ value, onChange, placeholder, autoFocus }: Prop
 }
 
 function Toolbar({ editor, onPickImage, uploading }: { editor: Editor | null; onPickImage: () => void; uploading: boolean }) {
+  const dialog = useDialog();
   if (!editor) return <div className="h-10 border-b border-slate-200 bg-slate-50" />;
 
-  const setLink = () => {
+  const setLink = async () => {
     const previous = editor.getAttributes("link").href as string | undefined;
-    const url = window.prompt("Link URL (leave empty to remove)", previous ?? "https://");
+    const url = await dialog.prompt({
+      title: previous ? "Edit link" : "Add link",
+      message: "Leave the URL empty to remove the link.",
+      label: "URL",
+      defaultValue: previous ?? "https://",
+      placeholder: "https://example.com",
+      confirmLabel: "Apply",
+    });
     if (url === null) return;
     if (url.trim() === "" || url.trim() === "https://") {
       editor.chain().focus().extendMarkRange("link").unsetLink().run();

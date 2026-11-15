@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { DialogProvider } from "@/components/Dialog";
 
 export const metadata: Metadata = {
   title: "GCS Student FAQs Portal",
@@ -13,7 +14,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className="antialiased">{children}</body>
+      <body className="antialiased">
+        <DialogProvider>{children}</DialogProvider>
+      </body>
     </html>
   );
 }

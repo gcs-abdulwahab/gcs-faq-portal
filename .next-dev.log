@@ -1,0 +1,17 @@
+
+> gcs-faq-portal@1.0.0 dev
+> next dev
+
+   ▲ Next.js 15.5.29
+   - Local:        http://localhost:3000
+   - Network:      http://192.168.18.187:3000
+   - Environments: .env.local
+
+ ✓ Starting...
+ ✓ Ready in 3.3s
+ ○ Compiling / ...
+ ✓ Compiled / in 21.8s (1040 modules)
+ GET / 200 in 24926ms
+ ○ Compiling /admin ...
+ ✓ Compiled /admin in 3.8s (1053 modules)
+ GET /admin 200 in 4000ms

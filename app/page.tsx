@@ -36,6 +36,7 @@ import { StarRating } from "@/components/StarRating";
 import { AskQuestion } from "@/components/AskQuestion";
 import { ReviewQueue } from "@/components/ReviewQueue";
 import { RichText } from "@/components/RichText";
+import { useDialog } from "@/components/Dialog";
 import { RichTextEditor } from "@/components/RichTextEditor";
 import { isBlankRichText, toPlainText } from "@/lib/richText";
 
@@ -70,6 +71,7 @@ const FALLBACK_FAQS: FAQ[] = [
 ];
 
 export default function FAQPortal() {
+  const dialog = useDialog();
   const [faqs, setFaqs] = useState<FAQ[]>([]);
   const [stars, setStars] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState<boolean>(true);
@@ -113,7 +115,7 @@ export default function FAQPortal() {
     const { error } = await supabase.rpc("reorder_faqs", { p_ids: reorderList.map((f) => f.id) });
     setSavingOrder(false);
     if (error) {
-      alert("Error saving order: " + error.message);
+      void dialog.alert({ title: "Couldn't save the new order", message: error.message });
       return;
     }
     setReorderList(null);
@@ -175,7 +177,7 @@ export default function FAQPortal() {
     const { data, error } = await supabase.rpc("admin_faq_info", { p_faq_id: id });
     if (error) {
       setInfoFor(null);
-      alert("Could not load history: " + error.message);
+      void dialog.alert({ title: "Couldn't load history", message: error.message });
       return;
     }
     setInfoData(((data as FaqInfo[]) ?? [])[0] ?? null);
@@ -259,7 +261,7 @@ export default function FAQPortal() {
       editingFaq.category === "__NEW__" ? customCategory.trim() : editingFaq.category;
 
     if (!finalCategory || !editingFaq.faq_code || !editingFaq.question || isBlankRichText(editingFaq.answer)) {
-      alert("Please fill in all fields.");
+      void dialog.alert({ title: "Some fields are missing", message: "Please fill in the code, category, question and answer.", tone: "info" });
       return;
     }
 
@@ -278,7 +280,7 @@ export default function FAQPortal() {
 
     setSaving(false);
     if (error) {
-      alert("Error saving FAQ: " + error.message);
+      void dialog.alert({ title: "Couldn't save the FAQ", message: error.message });
       return;
     }
 
@@ -288,9 +290,16 @@ export default function FAQPortal() {
   };
 
   const handleDeleteFaq = async (id: string) => {
-    if (!supabase || !confirm("Are you sure you want to delete this FAQ?")) return;
+    if (!supabase) return;
+    const ok = await dialog.confirm({
+      title: "Delete this FAQ?",
+      message: "It will be removed from the portal for everyone. This can't be undone.",
+      tone: "danger",
+      confirmLabel: "Delete",
+    });
+    if (!ok) return;
     const { error } = await supabase.from("faqs").delete().eq("id", id);
-    if (error) alert("Error deleting FAQ: " + error.message);
+    if (error) void dialog.alert({ title: "Couldn't delete the FAQ", message: error.message });
     else fetchFaqs();
   };
 
