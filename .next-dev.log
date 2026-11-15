@@ -15,3 +15,23 @@
  ○ Compiling /admin ...
  ✓ Compiled /admin in 3.8s (1053 modules)
  GET /admin 200 in 4000ms
+ GET / 200 in 336ms
+ ✓ Compiled in 370ms (464 modules)
+ GET / 200 in 205ms
+ ✓ Compiled in 297ms (464 modules)
+ GET / 200 in 35ms
+ ✓ Compiled in 254ms (464 modules)
+ GET / 200 in 249ms
+ ✓ Compiled in 345ms (464 modules)
+ GET / 200 in 45ms
+ ✓ Compiled in 1244ms (1052 modules)
+ GET / 200 in 175ms
+ ✓ Compiled in 170ms (464 modules)
+ GET / 200 in 180ms
+ ✓ Compiled in 246ms (464 modules)
+ GET / 200 in 140ms
+ ✓ Compiled in 418ms (471 modules)
+ GET / 200 in 60ms
+ ✓ Compiled /admin in 269ms (610 modules)
+ GET /admin 200 in 681ms
+ GET /admin 200 in 36ms

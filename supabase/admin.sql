@@ -508,3 +508,114 @@ drop policy if exists "Editors delete FAQ images" on storage.objects;
 create policy "Editors delete FAQ images"
   on storage.objects for delete to authenticated
   using (bucket_id = 'faq-images' and public.is_editor());
+
+-- 10. Staff account management (super admin) ---------------------------------------
+-- Lets the super admin add staff logins and reset passwords from the dashboard.
+-- Writes Supabase auth rows the same way the dashboard's "Add user" does (bcrypt
+-- password, email pre-confirmed), so the app needs no service-role key.
+
+create or replace function public.admin_list_users()
+returns table (email text, role text, has_login boolean, last_sign_in_at timestamptz, created_at timestamptz)
+language plpgsql stable security definer set search_path = public
+as $$
+begin
+  if not public.is_super_admin() then
+    raise exception 'Only the super admin can view staff accounts.';
+  end if;
+  return query
+    select e.email, e.role, u.id is not null, u.last_sign_in_at, u.created_at
+    from public.faq_editors e
+    left join auth.users u on lower(u.email) = lower(e.email)
+    order by (e.role = 'super_admin') desc, e.email;
+end;
+$$;
+
+create or replace function public.admin_set_password(p_email text, p_password text)
+returns void
+language plpgsql volatile security definer set search_path = public
+as $$
+declare
+  v_email text := lower(trim(p_email));
+  v_uid uuid;
+begin
+  if not public.is_super_admin() then
+    raise exception 'Only the super admin can change passwords.';
+  end if;
+  if length(coalesce(p_password, '')) < 8 then
+    raise exception 'Password must be at least 8 characters.';
+  end if;
+  if not exists (select 1 from public.faq_editors where lower(email) = v_email) then
+    raise exception '% is not a staff account.', v_email;
+  end if;
+
+  select id into v_uid from auth.users where lower(email) = v_email;
+
+  if v_uid is null then
+    -- Listed as staff but never had a login: create it now.
+    v_uid := gen_random_uuid();
+    insert into auth.users (
+      instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
+      confirmation_token, recovery_token, email_change_token_new, email_change,
+      raw_app_meta_data, raw_user_meta_data, created_at, updated_at
+    ) values (
+      '00000000-0000-0000-0000-000000000000', v_uid, 'authenticated', 'authenticated', v_email,
+      extensions.crypt(p_password, extensions.gen_salt('bf')), now(),
+      '', '', '', '',
+      '{"provider": "email", "providers": ["email"]}'::jsonb, '{"email_verified": true}'::jsonb, now(), now()
+    );
+    insert into auth.identities (provider_id, user_id, identity_data, provider, created_at, updated_at)
+    values (
+      v_uid::text, v_uid,
+      jsonb_build_object('sub', v_uid::text, 'email', v_email, 'email_verified', true, 'phone_verified', false),
+      'email', now(), now()
+    );
+    return;
+  end if;
+
+  update auth.users
+    set encrypted_password = extensions.crypt(p_password, extensions.gen_salt('bf')),
+        updated_at = now()
+    where id = v_uid;
+
+  -- Sign that person out of other devices so the old password stops working
+  -- (skipped for the admin's own account so they stay logged in).
+  if v_email <> lower(auth.jwt() ->> 'email') then
+    delete from auth.sessions where user_id = v_uid;
+  end if;
+end;
+$$;
+
+create or replace function public.admin_create_user(p_email text, p_password text, p_role text default 'editor')
+returns void
+language plpgsql volatile security definer set search_path = public
+as $$
+declare
+  v_email text := lower(trim(p_email));
+begin
+  if not public.is_super_admin() then
+    raise exception 'Only the super admin can add staff accounts.';
+  end if;
+  if v_email !~ '^[^@\s]+@[^@\s]+\.[^@\s]+$' then
+    raise exception 'Please enter a valid email address.';
+  end if;
+  if p_role not in ('editor', 'super_admin') then
+    raise exception 'Role must be editor or super_admin.';
+  end if;
+  if exists (select 1 from public.faq_editors where lower(email) = v_email) then
+    raise exception '% is already a staff account. Use "Change password" instead.', v_email;
+  end if;
+  if exists (select 1 from auth.users where lower(email) = v_email) then
+    raise exception 'A login for % already exists in Supabase Auth.', v_email;
+  end if;
+
+  insert into public.faq_editors (email, role) values (v_email, p_role);
+  perform public.admin_set_password(v_email, p_password); -- creates the login
+end;
+$$;
+
+revoke all on function public.admin_list_users() from public, anon;
+revoke all on function public.admin_set_password(text, text) from public, anon;
+revoke all on function public.admin_create_user(text, text, text) from public, anon;
+grant execute on function public.admin_list_users() to authenticated;
+grant execute on function public.admin_set_password(text, text) to authenticated;
+grant execute on function public.admin_create_user(text, text, text) to authenticated;

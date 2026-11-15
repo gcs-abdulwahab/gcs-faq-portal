@@ -21,6 +21,7 @@ import {
 import { supabase, getEditorRole } from "@/lib/supabase";
 import { StarRating, starsFromViews } from "@/components/StarRating";
 import { toPlainText } from "@/lib/richText";
+import { StaffAccounts } from "@/components/StaffAccounts";
 
 type Action = "created" | "updated" | "deleted" | "reordered";
 
@@ -307,6 +308,8 @@ export default function AdminDashboard() {
             </div>
           ))}
         </section>
+
+        <StaffAccounts currentEmail={userEmail} />
 
         <section className="bg-white rounded-2xl border border-slate-200 shadow-sm">
           <div className="px-5 py-4 border-b border-slate-100">
