@@ -48,6 +48,8 @@ export default function FAQPortal() {
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [isEditor, setIsEditor] = useState<boolean>(false);
   const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loggingIn, setLoggingIn] = useState(false);
   const [showLogin, setShowLogin] = useState(false);
   const [authMessage, setAuthMessage] = useState<string | null>(null);
 
@@ -119,21 +121,25 @@ export default function FAQPortal() {
     });
   }, [faqs, selectedCategory, searchQuery]);
 
-  const handleMagicLinkLogin = async (e: React.FormEvent) => {
+  const handlePasswordLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!supabase) {
       setAuthMessage("Configure NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY to enable staff login.");
       return;
     }
-    const { error } = await supabase.auth.signInWithOtp({
+    setLoggingIn(true);
+    setAuthMessage(null);
+    const { error } = await supabase.auth.signInWithPassword({
       email: loginEmail.trim(),
-      options: { emailRedirectTo: window.location.origin },
+      password: loginPassword,
     });
+    setLoggingIn(false);
     if (error) {
       setAuthMessage(error.message);
     } else {
-      setAuthMessage("Magic login link sent! Check your university email inbox.");
       setLoginEmail("");
+      setLoginPassword("");
+      setShowLogin(false);
     }
   };
 
@@ -243,23 +249,34 @@ export default function FAQPortal() {
                 Close
               </button>
             </div>
-            <form onSubmit={handleMagicLinkLogin} className="flex flex-col sm:flex-row gap-3">
+            <form onSubmit={handlePasswordLogin} className="flex flex-col sm:flex-row gap-3">
               <input
                 type="email"
                 required
-                placeholder="Enter authorized university staff email..."
+                autoComplete="username"
+                placeholder="Staff email"
                 value={loginEmail}
                 onChange={(e) => setLoginEmail(e.target.value)}
                 className="flex-1 border border-slate-300 rounded-xl px-3.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
+              <input
+                type="password"
+                required
+                autoComplete="current-password"
+                placeholder="Password"
+                value={loginPassword}
+                onChange={(e) => setLoginPassword(e.target.value)}
+                className="flex-1 border border-slate-300 rounded-xl px-3.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
               <button
                 type="submit"
-                className="bg-blue-600 text-white px-5 py-2 rounded-xl text-sm font-medium hover:bg-blue-700 transition"
+                disabled={loggingIn}
+                className="bg-blue-600 text-white px-5 py-2 rounded-xl text-sm font-medium hover:bg-blue-700 transition disabled:opacity-60"
               >
-                Send Magic Link
+                {loggingIn ? "Signing in..." : "Sign In"}
               </button>
             </form>
-            {authMessage && <p className="text-xs text-blue-700 font-medium">{authMessage}</p>}
+            {authMessage && <p className="text-xs text-red-600 font-medium">{authMessage}</p>}
           </div>
         )}
 

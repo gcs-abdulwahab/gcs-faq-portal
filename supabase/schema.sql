@@ -15,11 +15,10 @@ create table if not exists public.faq_editors (
   email text primary key
 );
 
--- Replace with actual staff email addresses who should have add/edit/delete permissions
+-- Staff email addresses who have add/edit/delete permissions.
+-- Each editor also needs a Supabase Auth user (Authentication -> Users -> Add user) with a password.
 insert into public.faq_editors (email) values
-  ('registrar.staff@youruniversity.edu.pk'),
-  ('controller.staff@youruniversity.edu.pk'),
-  ('scholarships@youruniversity.edu.pk')
+  ('admin@gcslahore.edu.pk')
 on conflict (email) do nothing;
 
 -- 3. Enable Row Level Security (RLS)
