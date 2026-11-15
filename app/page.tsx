@@ -16,11 +16,28 @@ import {
   BarChart3,
   GripVertical,
   ArrowUpDown,
+  Info,
 } from "lucide-react";
+
+interface FaqInfo {
+  created_by: string | null;
+  created_at: string | null;
+  last_edited_by: string | null;
+  last_edited_at: string | null;
+  edit_count: number;
+}
+
+function formatDateTime(iso: string | null) {
+  if (!iso) return "";
+  return new Date(iso).toLocaleString("en-PK", { dateStyle: "medium", timeStyle: "short" });
+}
 import { supabase, getEditorRole, recordView, type EditorRole } from "@/lib/supabase";
 import { StarRating } from "@/components/StarRating";
 import { AskQuestion } from "@/components/AskQuestion";
 import { ReviewQueue } from "@/components/ReviewQueue";
+import { RichText } from "@/components/RichText";
+import { RichTextEditor } from "@/components/RichTextEditor";
+import { isBlankRichText, toPlainText } from "@/lib/richText";
 
 interface FAQ {
   id: string;
@@ -140,6 +157,36 @@ export default function FAQPortal() {
     setRole(await getEditorRole(email));
   };
 
+  // Super admin: who added / last edited an FAQ
+  const [infoFor, setInfoFor] = useState<string | null>(null);
+  const [infoData, setInfoData] = useState<FaqInfo | null>(null);
+
+  const toggleInfo = async (id: string) => {
+    if (infoFor === id) {
+      setInfoFor(null);
+      return;
+    }
+    setInfoFor(id);
+    setInfoData(null);
+    if (!supabase) return;
+    const { data, error } = await supabase.rpc("admin_faq_info", { p_faq_id: id });
+    if (error) {
+      setInfoFor(null);
+      alert("Could not load history: " + error.message);
+      return;
+    }
+    setInfoData(((data as FaqInfo[]) ?? [])[0] ?? null);
+  };
+
+  // Jump to an FAQ in the list (used by "Ask a question" suggestions and answers).
+  const openFaq = (id: string) => {
+    setSearchQuery("");
+    setSelectedCategory("All");
+    setExpandedId(id);
+    recordView(id);
+    setTimeout(() => document.getElementById(`faq-${id}`)?.scrollIntoView({ behavior: "smooth" }), 50);
+  };
+
   const toggleFaq = (id: string) => {
     if (expandedId === id) {
       setExpandedId(null);
@@ -173,7 +220,7 @@ export default function FAQPortal() {
       const q = searchQuery.toLowerCase();
       const matchesSearch =
         faq.question.toLowerCase().includes(q) ||
-        faq.answer.toLowerCase().includes(q) ||
+        toPlainText(faq.answer).toLowerCase().includes(q) ||
         faq.faq_code.toLowerCase().includes(q) ||
         faq.category.toLowerCase().includes(q);
       return matchesCat && matchesSearch;
@@ -208,7 +255,7 @@ export default function FAQPortal() {
     const finalCategory =
       editingFaq.category === "__NEW__" ? customCategory.trim() : editingFaq.category;
 
-    if (!finalCategory || !editingFaq.faq_code || !editingFaq.question || !editingFaq.answer) {
+    if (!finalCategory || !editingFaq.faq_code || !editingFaq.question || isBlankRichText(editingFaq.answer)) {
       alert("Please fill in all fields.");
       return;
     }
@@ -218,7 +265,7 @@ export default function FAQPortal() {
       faq_code: editingFaq.faq_code.trim().toUpperCase(),
       category: finalCategory,
       question: editingFaq.question.trim(),
-      answer: editingFaq.answer.trim(),
+      answer: (editingFaq.answer ?? "").trim(),
       updated_at: new Date().toISOString(),
     };
 
@@ -539,13 +586,10 @@ export default function FAQPortal() {
 
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">Official Answer</label>
-              <textarea
-                rows={4}
-                required
+              <RichTextEditor
                 placeholder="Provide clear, accurate instructions..."
                 value={editingFaq.answer || ""}
-                onChange={(e) => setEditingFaq({ ...editingFaq, answer: e.target.value })}
-                className="w-full border border-slate-300 rounded-xl px-3.5 py-2 text-sm"
+                onChange={(html) => setEditingFaq({ ...editingFaq, answer: html })}
               />
             </div>
 
@@ -613,7 +657,8 @@ export default function FAQPortal() {
               return (
                 <div
                   key={faq.id}
-                  className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden transition hover:border-slate-300"
+                  id={`faq-${faq.id}`}
+                  className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden transition hover:border-slate-300 scroll-mt-4"
                 >
                   <div
                     onClick={() => toggleFaq(faq.id)}
@@ -635,6 +680,19 @@ export default function FAQPortal() {
                     <div className="flex items-center gap-2 shrink-0">
                       {isEditor && (
                         <div className="flex items-center gap-1.5 mr-2" onClick={(e) => e.stopPropagation()}>
+                          {isSuperAdmin && (
+                            <button
+                              onClick={() => toggleInfo(faq.id)}
+                              className={`p-1.5 rounded-lg transition ${
+                                infoFor === faq.id
+                                  ? "text-violet-700 bg-violet-50"
+                                  : "text-slate-600 hover:text-violet-700 hover:bg-violet-50"
+                              }`}
+                              title="Who added / edited this FAQ"
+                            >
+                              <Info className="w-4 h-4" />
+                            </button>
+                          )}
                           <button
                             onClick={() => setEditingFaq(faq)}
                             className="p-1.5 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition"
@@ -657,9 +715,43 @@ export default function FAQPortal() {
                     </div>
                   </div>
 
+                  {isSuperAdmin && infoFor === faq.id && (
+                    <div className="mx-5 mb-4 bg-violet-50 border border-violet-200 rounded-xl p-3.5 text-xs text-violet-950">
+                      {!infoData ? (
+                        <span className="text-violet-700">Loading history…</span>
+                      ) : (
+                        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
+                          <dt className="font-semibold">Added by</dt>
+                          <dd>
+                            {infoData.created_by ? (
+                              <>
+                                {infoData.created_by} · {formatDateTime(infoData.created_at)}
+                              </>
+                            ) : (
+                              <span className="text-violet-700">Original FAQ (imported at setup)</span>
+                            )}
+                          </dd>
+                          <dt className="font-semibold">Last edited by</dt>
+                          <dd>
+                            {infoData.last_edited_by ? (
+                              <>
+                                {infoData.last_edited_by} · {formatDateTime(infoData.last_edited_at)}
+                                {Number(infoData.edit_count) > 1 && (
+                                  <span className="text-violet-700"> ({infoData.edit_count} edits in total)</span>
+                                )}
+                              </>
+                            ) : (
+                              <span className="text-violet-700">Never edited</span>
+                            )}
+                          </dd>
+                        </dl>
+                      )}
+                    </div>
+                  )}
+
                   {isOpen && (
                     <div className="px-5 pb-5 pt-0 border-t border-slate-100">
-                      <p className="text-slate-600 text-sm leading-relaxed pt-3">{faq.answer}</p>
+                      <RichText value={faq.answer} className="text-slate-600 text-sm leading-relaxed pt-3" />
                     </div>
                   )}
                 </div>
@@ -668,7 +760,14 @@ export default function FAQPortal() {
           </div>
         )}
 
-        {!loading && <AskQuestion categories={categories.filter((c) => c !== "All")} prefill={searchQuery} />}
+        {!loading && (
+          <AskQuestion
+            categories={categories.filter((c) => c !== "All")}
+            faqs={faqs}
+            prefill={searchQuery}
+            onOpenFaq={openFaq}
+          />
+        )}
       </div>
     </main>
   );

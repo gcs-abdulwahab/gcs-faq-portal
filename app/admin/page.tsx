@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { supabase, getEditorRole } from "@/lib/supabase";
 import { StarRating, starsFromViews } from "@/components/StarRating";
+import { toPlainText } from "@/lib/richText";
 
 type Action = "created" | "updated" | "deleted" | "reordered";
 
@@ -462,15 +463,15 @@ export default function AdminDashboard() {
                           {entry.action === "updated" ? (
                             <div className="grid sm:grid-cols-2 gap-2">
                               <div className="bg-red-50 border border-red-100 rounded-lg p-2.5 text-red-900 whitespace-pre-wrap">
-                                {entry.old_data?.[field]}
+                                {toPlainText(entry.old_data?.[field], "[image]")}
                               </div>
                               <div className="bg-emerald-50 border border-emerald-100 rounded-lg p-2.5 text-emerald-900 whitespace-pre-wrap">
-                                {entry.new_data?.[field]}
+                                {toPlainText(entry.new_data?.[field], "[image]")}
                               </div>
                             </div>
                           ) : (
                             <div className="bg-slate-50 border border-slate-100 rounded-lg p-2.5 text-slate-800 whitespace-pre-wrap">
-                              {snapshot?.[field]}
+                              {toPlainText(snapshot?.[field], "[image]")}
                             </div>
                           )}
                         </div>

@@ -1,6 +1,8 @@
 // Lightweight keyword matcher used to find existing FAQs similar to a visitor's question.
 // Works on English and Roman Urdu by ignoring common filler words and matching word stems.
 
+import { toPlainText } from "./richText";
+
 export interface MatchableFaq {
   id: string;
   faq_code: string;
@@ -76,7 +78,7 @@ export function findSimilarFaqs<T extends MatchableFaq>(text: string, faqs: T[],
 
   const scored = faqs.map((faq) => {
     const qWords = tokenize(faq.question + " " + faq.category + " " + faq.faq_code);
-    const aWords = tokenize(faq.answer);
+    const aWords = tokenize(toPlainText(faq.answer));
     let score = 0;
     let questionHits = 0;
     for (const t of queryTokens) {

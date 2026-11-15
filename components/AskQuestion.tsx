@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { CheckCircle2, Clock, HelpCircle, Link2, MessageCirclePlus, Send, XCircle } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { findSimilarFaqs, type MatchableFaq } from "@/lib/similar";
+import { RichText } from "@/components/RichText";
 
 const STORAGE_KEY = "gcs-faq-my-questions";
 
@@ -173,7 +174,7 @@ export function AskQuestion({ categories, faqs, prefill = "", onOpenFaq }: Props
                     </button>
                     {previewId === f.id && (
                       <div className="px-3 pb-2.5 text-sm text-slate-600 space-y-2">
-                        <p>{f.answer}</p>
+                        <RichText value={f.answer} />
                         <button
                           type="button"
                           onClick={() => {
@@ -269,7 +270,7 @@ export function AskQuestion({ categories, faqs, prefill = "", onOpenFaq }: Props
                         {s.faq_question}
                       </p>
                     )}
-                    <p className="text-slate-700">{s.faq_answer}</p>
+                    <RichText value={s.faq_answer} className="text-slate-700" />
                     {s.faq_id && (
                       <button
                         onClick={() => onOpenFaq(s.faq_id!)}

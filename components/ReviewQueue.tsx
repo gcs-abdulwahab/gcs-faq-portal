@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { Check, ChevronDown, Inbox, Link2, X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { findSimilarFaqs, type MatchableFaq } from "@/lib/similar";
+import { RichTextEditor } from "@/components/RichTextEditor";
+import { isBlankRichText } from "@/lib/richText";
 
 interface Submission {
   id: string;
@@ -14,7 +16,7 @@ interface Submission {
 
 interface Props {
   categories: string[];
-  existingCodes: { faq_code: string; category: string }[];
+  existingCodes: MatchableFaq[];
   onPublished: () => void;
 }
 
@@ -40,6 +42,7 @@ export function ReviewQueue({ categories, existingCodes, onPublished }: Props) {
   const [approving, setApproving] = useState<string | null>(null);
   const [form, setForm] = useState({ faq_code: "", category: "", newCategory: "", question: "", answer: "" });
   const [busy, setBusy] = useState(false);
+  const [referPicker, setReferPicker] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!supabase) return;
@@ -78,6 +81,10 @@ export function ReviewQueue({ categories, existingCodes, onPublished }: Props) {
   const approve = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!supabase || !approving) return;
+    if (isBlankRichText(form.answer)) {
+      alert("Please write an answer.");
+      return;
+    }
     const category = form.category === "__NEW__" ? form.newCategory.trim() : form.category;
     setBusy(true);
     const { error } = await supabase.rpc("approve_submission", {
@@ -95,6 +102,15 @@ export function ReviewQueue({ categories, existingCodes, onPublished }: Props) {
     setApproving(null);
     load();
     onPublished();
+  };
+
+  const refer = async (s: Submission, faq: MatchableFaq) => {
+    if (!supabase) return;
+    if (!confirm(`Answer this question with ${faq.faq_code}?\n\n"${faq.question}"`)) return;
+    const { error } = await supabase.rpc("refer_submission", { p_id: s.id, p_faq_id: faq.id });
+    if (error) alert("Could not refer: " + error.message);
+    setReferPicker(null);
+    load();
   };
 
   const reject = async (s: Submission) => {
@@ -136,7 +152,7 @@ export function ReviewQueue({ categories, existingCodes, onPublished }: Props) {
                   </p>
                 </div>
                 {approving !== s.id && (
-                  <div className="flex gap-2 shrink-0">
+                  <div className="flex flex-wrap gap-2 shrink-0">
                     <button
                       onClick={() => reject(s)}
                       className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-red-700 border border-red-200 rounded-lg hover:bg-red-50"
@@ -144,14 +160,71 @@ export function ReviewQueue({ categories, existingCodes, onPublished }: Props) {
                       <X className="w-3.5 h-3.5" /> Reject
                     </button>
                     <button
+                      onClick={() => setReferPicker(referPicker === s.id ? null : s.id)}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-blue-700 border border-blue-200 rounded-lg hover:bg-blue-50"
+                    >
+                      <Link2 className="w-3.5 h-3.5" /> Refer to FAQ
+                    </button>
+                    <button
                       onClick={() => startApprove(s)}
                       className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700"
                     >
-                      <Check className="w-3.5 h-3.5" /> Approve
+                      <Check className="w-3.5 h-3.5" /> New Question
                     </button>
                   </div>
                 )}
               </div>
+
+              {approving !== s.id && (() => {
+                const related = findSimilarFaqs(s.question, existingCodes, 3);
+                const showPicker = referPicker === s.id;
+                if (related.length === 0 && !showPicker) return null;
+                return (
+                  <div className="bg-blue-50/60 border border-blue-100 rounded-xl p-3 space-y-2">
+                    {related.length > 0 && (
+                      <>
+                        <p className="text-xs font-semibold text-blue-900">Possibly already answered by:</p>
+                        <ul className="space-y-1">
+                          {related.map((f) => (
+                            <li key={f.id} className="flex items-center justify-between gap-2 bg-white border border-blue-100 rounded-lg px-2.5 py-1.5">
+                              <span className="text-xs text-slate-800 min-w-0 truncate">
+                                <span className="font-mono font-semibold mr-1.5">{f.faq_code}</span>
+                                {f.question}
+                              </span>
+                              <button
+                                onClick={() => refer(s, f)}
+                                className="text-xs font-medium text-blue-700 hover:underline shrink-0"
+                              >
+                                Refer
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+                    {showPicker && (
+                      <select
+                        defaultValue=""
+                        onChange={(e) => {
+                          const f = existingCodes.find((x) => x.id === e.target.value);
+                          if (f) refer(s, f);
+                          e.target.value = "";
+                        }}
+                        className="w-full border border-blue-200 rounded-lg px-2.5 py-1.5 text-xs bg-white"
+                      >
+                        <option value="" disabled>
+                          Choose any FAQ to refer to...
+                        </option>
+                        {existingCodes.map((f) => (
+                          <option key={f.id} value={f.id}>
+                            {f.faq_code} — {f.question}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                );
+              })()}
 
               {approving === s.id && (
                 <form onSubmit={approve} className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
@@ -205,18 +278,17 @@ export function ReviewQueue({ categories, existingCodes, onPublished }: Props) {
                       className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm font-normal bg-white"
                     />
                   </label>
-                  <label className="block text-xs font-semibold text-slate-700">
+                  <div className="text-xs font-semibold text-slate-700">
                     Answer
-                    <textarea
-                      required
-                      rows={4}
-                      autoFocus
-                      placeholder="Write the official answer..."
-                      value={form.answer}
-                      onChange={(e) => setForm({ ...form, answer: e.target.value })}
-                      className="mt-1 w-full border border-slate-300 rounded-lg px-3 py-1.5 text-sm font-normal bg-white"
-                    />
-                  </label>
+                    <div className="mt-1 font-normal">
+                      <RichTextEditor
+                        autoFocus
+                        placeholder="Write the official answer..."
+                        value={form.answer}
+                        onChange={(html) => setForm({ ...form, answer: html })}
+                      />
+                    </div>
+                  </div>
                   <div className="flex justify-end gap-2">
                     <button
                       type="button"
@@ -230,7 +302,7 @@ export function ReviewQueue({ categories, existingCodes, onPublished }: Props) {
                       disabled={busy}
                       className="px-4 py-1.5 text-sm bg-emerald-600 text-white rounded-lg font-medium hover:bg-emerald-700 disabled:opacity-50"
                     >
-                      {busy ? "Publishing..." : "Approve & Publish"}
+                      {busy ? "Publishing..." : "Publish as New FAQ"}
                     </button>
                   </div>
                 </form>

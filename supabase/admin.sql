@@ -490,3 +490,21 @@ end;
 $$;
 revoke all on function public.admin_faq_info(uuid) from public, anon;
 grant execute on function public.admin_faq_info(uuid) to authenticated;
+
+-- 9. Image uploads for rich-text answers ------------------------------------------
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('faq-images', 'faq-images', true, 512000,array['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
+on conflict (id) do update
+  set public = excluded.public,
+      file_size_limit = excluded.file_size_limit,
+      allowed_mime_types = excluded.allowed_mime_types;
+
+drop policy if exists "Editors upload FAQ images" on storage.objects;
+create policy "Editors upload FAQ images"
+  on storage.objects for insert to authenticated
+  with check (bucket_id = 'faq-images' and public.is_editor());
+
+drop policy if exists "Editors delete FAQ images" on storage.objects;
+create policy "Editors delete FAQ images"
+  on storage.objects for delete to authenticated
+  using (bucket_id = 'faq-images' and public.is_editor());
