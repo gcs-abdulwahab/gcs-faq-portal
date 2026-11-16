@@ -7,24 +7,31 @@ export const supabase = supabaseUrl && supabaseAnonKey ? createClient(supabaseUr
 
 export type EditorRole = "editor" | "super_admin";
 
+/** Which FAQs a staff member may edit or delete. */
+export type FaqScope = "none" | "own" | "all";
+
 export interface StaffAccess {
   role: EditorRole;
   canAdd: boolean;
-  canEdit: boolean;
-  canDelete: boolean;
+  editScope: FaqScope;
+  deleteScope: FaqScope;
   canViewDashboard: boolean;
+}
+
+function toScope(v: unknown): FaqScope {
+  return v === "none" || v === "own" ? v : "all";
 }
 
 /** Role and permissions for a staff member, or null for visitors. Super admins always get everything. */
 export async function getStaffAccess(email: string | undefined | null): Promise<StaffAccess | null> {
   if (!email || !supabase) return null;
-  let { data, error } = await supabase
+  // Typed loosely: the permission columns may not exist yet, in which case we fall back to role only.
+  let { data, error } = (await supabase
     .from("faq_editors")
-    .select("role, can_add, can_edit, can_delete, can_view_dashboard")
+    .select("role, can_add, edit_scope, delete_scope, can_view_dashboard")
     .eq("email", email)
-    .maybeSingle();
+    .maybeSingle()) as { data: Record<string, unknown> | null; error: unknown };
   if (error) {
-    // Permission columns not in the database yet: fall back to role only (full access for staff).
     ({ data, error } = await supabase.from("faq_editors").select("role").eq("email", email).maybeSingle());
   }
   if (!data) return null;
@@ -32,10 +39,17 @@ export async function getStaffAccess(email: string | undefined | null): Promise<
   return {
     role: data.role as EditorRole,
     canAdd: all || data.can_add !== false,
-    canEdit: all || data.can_edit !== false,
-    canDelete: all || data.can_delete !== false,
+    editScope: all ? "all" : toScope(data.edit_scope),
+    deleteScope: all ? "all" : toScope(data.delete_scope),
     canViewDashboard: all || data.can_view_dashboard !== false,
   };
+}
+
+/** Whether a scope lets `email` change an FAQ created by `createdBy`. */
+export function scopeAllows(scope: FaqScope | undefined, createdBy: string | null | undefined, email: string | null | undefined) {
+  if (scope === "all") return true;
+  if (scope === "own") return !!createdBy && !!email && createdBy.toLowerCase() === email.toLowerCase();
+  return false;
 }
 
 export async function getEditorRole(email: string | undefined | null): Promise<EditorRole | null> {

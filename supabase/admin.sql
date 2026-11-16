@@ -766,3 +766,172 @@ end;
 $$;
 revoke all on function public.admin_set_permissions(text, boolean, boolean, boolean, boolean) from public, anon;
 grant execute on function public.admin_set_permissions(text, boolean, boolean, boolean, boolean) to authenticated;
+
+-- 12. Edit / delete scope per staff member: none, own FAQs only, or any FAQ ---------
+-- Each FAQ now records who created it (backfilled from the audit log; older seeded FAQs
+-- have no creator, so only staff with "any" scope can edit or delete them).
+alter table public.faqs add column if not exists created_by text;
+update public.faqs f
+  set created_by = (select lower(l.actor_email) from public.faq_audit_log l
+                    where l.faq_id = f.id and l.action = 'created' and l.actor_email is not null
+                    order by l.created_at limit 1)
+  where f.created_by is null;
+
+alter table public.faq_editors
+  add column if not exists edit_scope text not null default 'all',
+  add column if not exists delete_scope text not null default 'all';
+
+-- Carry over the old on/off switches (only while they still exist).
+do $$
+begin
+  if exists (select 1 from information_schema.columns
+             where table_schema = 'public' and table_name = 'faq_editors' and column_name = 'can_edit') then
+    execute $q$
+      update public.faq_editors
+        set edit_scope = case when can_edit then 'all' else 'none' end,
+            delete_scope = case when can_delete then 'all' else 'none' end
+    $q$;
+  end if;
+end $$;
+
+alter table public.faq_editors drop constraint if exists faq_editors_edit_scope_check;
+alter table public.faq_editors add constraint faq_editors_edit_scope_check check (edit_scope in ('none', 'own', 'all'));
+alter table public.faq_editors drop constraint if exists faq_editors_delete_scope_check;
+alter table public.faq_editors add constraint faq_editors_delete_scope_check check (delete_scope in ('none', 'own', 'all'));
+
+-- 'edit' / 'delete' -> 'none' | 'own' | 'all' for the signed-in user. Super admins: 'all'.
+create or replace function public.staff_scope(p_action text)
+returns text
+language sql stable security definer set search_path = public
+as $$
+  select coalesce((
+    select case
+      when e.role = 'super_admin' then 'all'
+      when p_action = 'edit' then e.edit_scope
+      when p_action = 'delete' then e.delete_scope
+      else 'none'
+    end
+    from public.faq_editors e
+    where lower(e.email) = lower(auth.jwt() ->> 'email')
+  ), 'none');
+$$;
+revoke all on function public.staff_scope(text) from public, anon;
+grant execute on function public.staff_scope(text) to authenticated;
+
+create or replace function public.can_modify_faq(p_action text, p_created_by text)
+returns boolean
+language sql stable security definer set search_path = public
+as $$
+  select case public.staff_scope(p_action)
+    when 'all' then true
+    when 'own' then p_created_by is not null and lower(p_created_by) = lower(auth.jwt() ->> 'email')
+    else false
+  end;
+$$;
+revoke all on function public.can_modify_faq(text, text) from public, anon;
+grant execute on function public.can_modify_faq(text, text) to authenticated;
+
+create or replace function public.has_staff_permission(p_permission text)
+returns boolean
+language sql stable security definer set search_path = public
+as $$
+  select coalesce((
+    select case
+      when e.role = 'super_admin' then true
+      when p_permission = 'add' then e.can_add
+      when p_permission = 'edit' then e.edit_scope <> 'none'
+      when p_permission = 'delete' then e.delete_scope <> 'none'
+      when p_permission = 'dashboard' then e.can_view_dashboard
+      else false
+    end
+    from public.faq_editors e
+    where lower(e.email) = lower(auth.jwt() ->> 'email')
+  ), false);
+$$;
+
+create or replace function public.faq_permission_guard()
+returns trigger
+language plpgsql security definer set search_path = public
+as $$
+begin
+  if tg_op = 'UPDATE' then
+    new.created_by := old.created_by; -- the creator is never reassigned
+  end if;
+  if auth.jwt() is null then
+    return coalesce(new, old);
+  end if;
+  if tg_op = 'INSERT' then
+    if not public.has_staff_permission('add') then
+      raise exception 'You do not have permission to add FAQs.' using errcode = '42501';
+    end if;
+    new.created_by := lower(auth.jwt() ->> 'email');
+  elsif tg_op = 'UPDATE'
+        and (to_jsonb(new) - 'sort_order' - 'updated_at') is distinct from (to_jsonb(old) - 'sort_order' - 'updated_at')
+        and not public.can_modify_faq('edit', old.created_by) then
+    if public.staff_scope('edit') = 'own' then
+      raise exception 'You can only edit FAQs you created.' using errcode = '42501';
+    end if;
+    raise exception 'You do not have permission to edit FAQs.' using errcode = '42501';
+  elsif tg_op = 'DELETE' and not public.can_modify_faq('delete', old.created_by) then
+    if public.staff_scope('delete') = 'own' then
+      raise exception 'You can only delete FAQs you created.' using errcode = '42501';
+    end if;
+    raise exception 'You do not have permission to delete FAQs.' using errcode = '42501';
+  end if;
+  return coalesce(new, old);
+end;
+$$;
+
+drop function if exists public.admin_list_users();
+create function public.admin_list_users()
+returns table (
+  email text, role text, has_login boolean, last_sign_in_at timestamptz, created_at timestamptz,
+  can_add boolean, edit_scope text, delete_scope text, can_view_dashboard boolean
+)
+language plpgsql stable security definer set search_path = public
+as $$
+begin
+  if not public.is_super_admin() then
+    raise exception 'Only the super admin can view staff accounts.';
+  end if;
+  return query
+    select e.email, e.role, u.id is not null, u.last_sign_in_at, u.created_at,
+           e.can_add, e.edit_scope, e.delete_scope, e.can_view_dashboard
+    from public.faq_editors e
+    left join auth.users u on lower(u.email) = lower(e.email)
+    order by (e.role = 'super_admin') desc, e.email;
+end;
+$$;
+revoke all on function public.admin_list_users() from public, anon;
+grant execute on function public.admin_list_users() to authenticated;
+
+drop function if exists public.admin_set_permissions(text, boolean, boolean, boolean, boolean);
+create or replace function public.admin_set_permissions(
+  p_email text, p_can_add boolean, p_edit_scope text, p_delete_scope text, p_can_view_dashboard boolean
+)
+returns void
+language plpgsql volatile security definer set search_path = public
+as $$
+begin
+  if not public.is_super_admin() then
+    raise exception 'Only the super admin can change permissions.';
+  end if;
+  if p_edit_scope not in ('none', 'own', 'all') or p_delete_scope not in ('none', 'own', 'all') then
+    raise exception 'Scope must be none, own or all.';
+  end if;
+  update public.faq_editors
+    set can_add = p_can_add, edit_scope = p_edit_scope, delete_scope = p_delete_scope,
+        can_view_dashboard = p_can_view_dashboard
+    where lower(email) = lower(trim(p_email)) and role <> 'super_admin';
+  if not found then
+    raise exception 'Permissions can only be changed for editor accounts (super admins always have full access).';
+  end if;
+end;
+$$;
+revoke all on function public.admin_set_permissions(text, boolean, text, text, boolean) from public, anon;
+grant execute on function public.admin_set_permissions(text, boolean, text, text, boolean) to authenticated;
+
+-- The old on/off columns are replaced by the scopes above.
+alter table public.faq_editors drop column if exists can_edit, drop column if exists can_delete;
+
+notify pgrst, 'reload schema';

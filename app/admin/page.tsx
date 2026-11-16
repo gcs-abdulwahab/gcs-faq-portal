@@ -17,6 +17,7 @@ import {
   RefreshCw,
   ShieldAlert,
   Trash2,
+  Users,
 } from "lucide-react";
 import { supabase, getStaffAccess, type EditorRole } from "@/lib/supabase";
 import { StarRating, starsFromViews } from "@/components/StarRating";
@@ -137,6 +138,13 @@ export default function AdminDashboard() {
   useEffect(() => {
     if (authState === "ok") loadData();
   }, [authState, loadData]);
+
+  // The staff section only renders after the access check, so jump to #staff once it exists.
+  useEffect(() => {
+    if (authState === "ok" && role === "super_admin" && window.location.hash === "#staff") {
+      requestAnimationFrame(() => document.getElementById("staff")?.scrollIntoView({ behavior: "smooth" }));
+    }
+  }, [authState, role]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -273,6 +281,14 @@ export default function AdminDashboard() {
             >
               <ArrowLeft className="w-4 h-4" /> FAQs
             </Link>
+            {isSuperAdmin && (
+              <a
+                href="#staff"
+                className="inline-flex items-center gap-1.5 text-sm bg-slate-800 border border-slate-700 px-3 py-2 rounded-xl hover:bg-slate-700"
+              >
+                <Users className="w-4 h-4" /> Staff accounts
+              </a>
+            )}
             <button
               onClick={loadData}
               disabled={loadingData}
@@ -319,7 +335,11 @@ export default function AdminDashboard() {
           ))}
         </section>
 
-        {isSuperAdmin && <StaffAccounts currentEmail={userEmail} />}
+        {isSuperAdmin && (
+          <div id="staff" className="scroll-mt-6">
+            <StaffAccounts currentEmail={userEmail} />
+          </div>
+        )}
 
         <section className="bg-white rounded-2xl border border-slate-200 shadow-sm">
           <div className="px-5 py-4 border-b border-slate-100">

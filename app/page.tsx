@@ -17,6 +17,7 @@ import {
   GripVertical,
   ArrowUpDown,
   Info,
+  Users,
 } from "lucide-react";
 
 interface FaqInfo {
@@ -31,7 +32,7 @@ function formatDateTime(iso: string | null) {
   if (!iso) return "";
   return new Date(iso).toLocaleString("en-PK", { dateStyle: "medium", timeStyle: "short" });
 }
-import { supabase, getStaffAccess, recordView, type StaffAccess } from "@/lib/supabase";
+import { supabase, getStaffAccess, recordView, scopeAllows, type StaffAccess } from "@/lib/supabase";
 import { StarRating } from "@/components/StarRating";
 import { AskQuestion } from "@/components/AskQuestion";
 import { ReviewQueue } from "@/components/ReviewQueue";
@@ -47,6 +48,7 @@ interface FAQ {
   question: string;
   answer: string;
   updated_at?: string;
+  created_by?: string | null;
 }
 
 const FALLBACK_FAQS: FAQ[] = [
@@ -308,11 +310,12 @@ export default function FAQPortal() {
     <main className="min-h-screen bg-slate-50 text-slate-900">
       <div className="bg-slate-900 text-white">
         <div className="max-w-5xl mx-auto px-6 py-8 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex items-start gap-3.5">
-            <div className="bg-blue-600 p-2.5 rounded-xl mt-0.5">
-              <BookOpen className="w-6 h-6 text-white" />
-            </div>
+          <div className="flex items-center gap-4">
+            <CollegeLogo />
             <div>
+              <div className="text-xs sm:text-sm font-semibold uppercase tracking-wider text-blue-300">
+                Govt. Graduate College of Science, Lahore
+              </div>
               <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">GCS Student FAQs Portal</h1>
               <p className="text-slate-300 text-sm mt-1">
                 Registrar Office, Controller of Examinations, Scholarships & Student Services
@@ -336,6 +339,15 @@ export default function FAQPortal() {
                     title="Admin Dashboard"
                   >
                     <BarChart3 className="w-4 h-4" />
+                  </Link>
+                )}
+                {isSuperAdmin && (
+                  <Link
+                    href="/admin#staff"
+                    className="text-slate-300 hover:text-white p-1.5 rounded-lg hover:bg-slate-700 transition"
+                    title="Staff Accounts"
+                  >
+                    <Users className="w-4 h-4" />
                   </Link>
                 )}
                 <button
@@ -414,11 +426,17 @@ export default function FAQPortal() {
               <ShieldCheck className="w-5 h-5 text-blue-600 shrink-0" />
               <span>
                 <strong>Editor Access Active:</strong> You can{" "}
-                {[access?.canAdd && "add", access?.canEdit && "edit", access?.canDelete && "delete"]
+                {[
+                  access?.canAdd && "add FAQs",
+                  access?.editScope === "all" ? "edit any FAQ" : access?.editScope === "own" && "edit FAQs you created",
+                  access?.deleteScope === "all"
+                    ? "delete any FAQ"
+                    : access?.deleteScope === "own" && "delete FAQs you created",
+                ]
                   .filter(Boolean)
                   .join(", ")
-                  .replace(/, ([^,]*)$/, " and $1") || "view"}{" "}
-                FAQs.
+                  .replace(/, ([^,]*)$/, " and $1") || "view FAQs only"}
+                .
               </span>
             </div>
             <div className="flex gap-2 shrink-0">
@@ -714,7 +732,7 @@ export default function FAQPortal() {
                               <Info className="w-4 h-4" />
                             </button>
                           )}
-                          {access?.canEdit && (
+                          {scopeAllows(access?.editScope, faq.created_by, userEmail) && (
                           <button
                             onClick={() => setEditingFaq(faq)}
                             className="p-1.5 text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition"
@@ -723,7 +741,7 @@ export default function FAQPortal() {
                             <Edit2 className="w-4 h-4" />
                           </button>
                           )}
-                          {access?.canDelete && (
+                          {scopeAllows(access?.deleteScope, faq.created_by, userEmail) && (
                           <button
                             onClick={() => handleDeleteFaq(faq.id)}
                             className="p-1.5 text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-lg transition"

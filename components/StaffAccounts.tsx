@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Eye, EyeOff, KeyRound, Loader2, ShieldCheck, UserPlus, Users, Wand2 } from "lucide-react";
-import { supabase } from "@/lib/supabase";
+import { supabase, type FaqScope } from "@/lib/supabase";
 import { useDialog } from "@/components/Dialog";
 
 interface StaffUser {
@@ -12,57 +12,175 @@ interface StaffUser {
   last_sign_in_at: string | null;
   created_at: string | null;
   can_add: boolean;
-  can_edit: boolean;
-  can_delete: boolean;
+  edit_scope: FaqScope;
+  delete_scope: FaqScope;
   can_view_dashboard: boolean;
 }
 
-type PermKey = "can_add" | "can_edit" | "can_delete" | "can_view_dashboard";
-type Perms = Record<PermKey, boolean>;
+interface Perms {
+  can_add: boolean;
+  edit_scope: FaqScope;
+  delete_scope: FaqScope;
+  can_view_dashboard: boolean;
+}
 
-const PERMISSIONS: { key: PermKey; label: string; hint: string }[] = [
-  { key: "can_add", label: "Add FAQs", hint: "Create new FAQs and publish answers to visitor questions" },
-  { key: "can_edit", label: "Edit FAQs", hint: "Change existing questions and answers" },
-  { key: "can_delete", label: "Delete FAQs", hint: "Remove FAQs from the portal" },
-  { key: "can_view_dashboard", label: "View dashboard", hint: "See view stats and the activity log" },
+const ALL_PERMS: Perms = { can_add: true, edit_scope: "all", delete_scope: "all", can_view_dashboard: true };
+
+function pickPerms(u: Perms): Perms {
+  return {
+    can_add: u.can_add,
+    edit_scope: u.edit_scope,
+    delete_scope: u.delete_scope,
+    can_view_dashboard: u.can_view_dashboard,
+  };
+}
+
+const SCOPES: { value: FaqScope; label: string }[] = [
+  { value: "none", label: "None" },
+  { value: "own", label: "Own" },
+  { value: "all", label: "Any" },
 ];
 
-const ALL_PERMS: Perms = { can_add: true, can_edit: true, can_delete: true, can_view_dashboard: true };
-
-function PermissionToggles({
-  value,
-  onToggle,
+function TogglePill({
+  on,
+  label,
+  hint,
   disabled,
+  onClick,
 }: {
-  value: Perms;
-  onToggle: (key: PermKey) => void;
+  on: boolean;
+  label: string;
+  hint: string;
   disabled?: boolean;
+  onClick: () => void;
 }) {
   return (
-    <div className="flex flex-wrap gap-1.5">
-      {PERMISSIONS.map(({ key, label, hint }) => {
-        const on = value[key];
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      title={hint}
+      disabled={disabled}
+      onClick={onClick}
+      className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full border transition disabled:opacity-60 ${
+        on
+          ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
+          : "bg-white text-slate-400 border-slate-200 line-through hover:bg-slate-50"
+      }`}
+    >
+      <span className={`h-1.5 w-1.5 rounded-full ${on ? "bg-emerald-500" : "bg-slate-300"}`} />
+      {label}
+    </button>
+  );
+}
+
+function ScopePicker({
+  label,
+  hint,
+  value,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  hint: string;
+  value: FaqScope;
+  disabled?: boolean;
+  onChange: (v: FaqScope) => void;
+}) {
+  const on = value !== "none";
+  return (
+    <div
+      role="radiogroup"
+      aria-label={label}
+      title={hint}
+      className={`inline-flex items-center gap-1 text-xs font-medium pl-2.5 pr-0.5 py-0.5 rounded-full border ${
+        on ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-white text-slate-400 border-slate-200"
+      }`}
+    >
+      <span className={`h-1.5 w-1.5 rounded-full ${on ? "bg-emerald-500" : "bg-slate-300"}`} />
+      <span className="mr-1">{label}</span>
+      {SCOPES.map((s) => {
+        const active = value === s.value;
         return (
           <button
-            key={key}
+            key={s.value}
             type="button"
-            role="switch"
-            aria-checked={on}
-            title={hint}
+            role="radio"
+            aria-checked={active}
             disabled={disabled}
-            onClick={() => onToggle(key)}
-            className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full border transition disabled:opacity-60 ${
-              on
-                ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100"
-                : "bg-white text-slate-400 border-slate-200 line-through hover:bg-slate-50"
+            onClick={() => !active && onChange(s.value)}
+            title={
+              s.value === "none"
+                ? `Can't ${label.toLowerCase()}`
+                : s.value === "own"
+                  ? `${label} only FAQs they created`
+                  : `${label} any FAQ`
+            }
+            className={`px-2 py-0.5 rounded-full transition disabled:opacity-60 ${
+              active
+                ? on
+                  ? "bg-emerald-600 text-white"
+                  : "bg-slate-500 text-white"
+                : "text-slate-500 hover:bg-white/80 hover:text-slate-800"
             }`}
           >
-            <span className={`h-1.5 w-1.5 rounded-full ${on ? "bg-emerald-500" : "bg-slate-300"}`} />
-            {label}
+            {s.label}
           </button>
         );
       })}
     </div>
+  );
+}
+
+function PermissionControls({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: Perms;
+  onChange: (next: Perms) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <TogglePill
+        on={value.can_add}
+        label="Add FAQs"
+        hint="Create new FAQs and publish answers to visitor questions"
+        disabled={disabled}
+        onClick={() => onChange({ ...value, can_add: !value.can_add })}
+      />
+      <ScopePicker
+        label="Edit"
+        hint="Which FAQs they can edit: none, only ones they created, or any"
+        value={value.edit_scope}
+        disabled={disabled}
+        onChange={(edit_scope) => onChange({ ...value, edit_scope })}
+      />
+      <ScopePicker
+        label="Delete"
+        hint="Which FAQs they can delete: none, only ones they created, or any"
+        value={value.delete_scope}
+        disabled={disabled}
+        onChange={(delete_scope) => onChange({ ...value, delete_scope })}
+      />
+      <TogglePill
+        on={value.can_view_dashboard}
+        label="View dashboard"
+        hint="See view stats and the activity log"
+        disabled={disabled}
+        onClick={() => onChange({ ...value, can_view_dashboard: !value.can_view_dashboard })}
+      />
+    </div>
+  );
+}
+
+function samePerms(a: Perms, b: Perms) {
+  return (
+    a.can_add === b.can_add &&
+    a.edit_scope === b.edit_scope &&
+    a.delete_scope === b.delete_scope &&
+    a.can_view_dashboard === b.can_view_dashboard
   );
 }
 
@@ -168,14 +286,8 @@ export function StaffAccounts({ currentEmail }: { currentEmail: string | null })
       p_password: newUser.password,
       p_role: newUser.role,
     });
-    if (!error && newUser.role === "editor" && Object.values(newPerms).some((v) => !v)) {
-      const res = await supabase.rpc("admin_set_permissions", {
-        p_email: email,
-        p_can_add: newPerms.can_add,
-        p_can_edit: newPerms.can_edit,
-        p_can_delete: newPerms.can_delete,
-        p_can_view_dashboard: newPerms.can_view_dashboard,
-      });
+    if (!error && newUser.role === "editor" && !samePerms(newPerms, ALL_PERMS)) {
+      const res = await savePerms(email, newPerms);
       if (res.error) {
         void dialog.alert({
           title: "Account created, but permissions weren't saved",
@@ -204,24 +316,20 @@ export function StaffAccounts({ currentEmail }: { currentEmail: string | null })
     });
   };
 
-  const togglePermission = async (u: StaffUser, key: PermKey) => {
+  const savePerms = (email: string, p: Perms) =>
+    supabase!.rpc("admin_set_permissions", {
+      p_email: email,
+      p_can_add: p.can_add,
+      p_edit_scope: p.edit_scope,
+      p_delete_scope: p.delete_scope,
+      p_can_view_dashboard: p.can_view_dashboard,
+    });
+
+  const updatePermissions = async (u: StaffUser, next: Perms) => {
     if (!supabase) return;
-    const next: Perms = {
-      can_add: u.can_add,
-      can_edit: u.can_edit,
-      can_delete: u.can_delete,
-      can_view_dashboard: u.can_view_dashboard,
-      [key]: !u[key],
-    };
     setSavingPerms(u.email);
     setUsers((list) => list.map((x) => (x.email === u.email ? { ...x, ...next } : x))); // optimistic
-    const { error } = await supabase.rpc("admin_set_permissions", {
-      p_email: u.email,
-      p_can_add: next.can_add,
-      p_can_edit: next.can_edit,
-      p_can_delete: next.can_delete,
-      p_can_view_dashboard: next.can_view_dashboard,
-    });
+    const { error } = await savePerms(u.email, next);
     setSavingPerms(null);
     if (error) {
       void dialog.alert({ title: "Couldn't update permissions", message: error.message });
@@ -312,10 +420,7 @@ export function StaffAccounts({ currentEmail }: { currentEmail: string | null })
           {newUser.role === "editor" ? (
             <div className="text-xs font-semibold text-slate-700 space-y-1.5">
               Permissions
-              <PermissionToggles
-                value={newPerms}
-                onToggle={(key) => setNewPerms((p) => ({ ...p, [key]: !p[key] }))}
-              />
+              <PermissionControls value={newPerms} onChange={setNewPerms} />
             </div>
           ) : (
             <p className="text-xs text-slate-500">Super admins always have every permission, including managing staff accounts.</p>
@@ -376,10 +481,10 @@ export function StaffAccounts({ currentEmail }: { currentEmail: string | null })
                       {u.role === "super_admin" ? (
                         <span className="text-xs text-slate-500">All permissions, including staff accounts</span>
                       ) : (
-                        <PermissionToggles
-                          value={u}
+                        <PermissionControls
+                          value={pickPerms(u)}
                           disabled={savingPerms === u.email}
-                          onToggle={(key) => togglePermission(u, key)}
+                          onChange={(next) => updatePermissions(u, next)}
                         />
                       )}
                     </div>
